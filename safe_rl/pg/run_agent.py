@@ -16,6 +16,7 @@ from safe_rl.utils.logx import EpochLogger
 from safe_rl.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from safe_rl.utils.mpi_tools import mpi_fork, proc_id, num_procs, mpi_sum
 
+
 # Multi-purpose agent runner for policy optimization algos 
 # (PPO, TRPO, their primal-dual equivalents, CPO)
 def run_polopt_agent(env_fn, 
@@ -47,9 +48,9 @@ def run_polopt_agent(env_fn,
                      # Logging:
                      logger=None, 
                      logger_kwargs=dict(), 
-                     save_freq=1
+                     save_freq=1,
+                     thre_sche=None
                      ):
-
 
     #=========================================================================#
     #  Prepare logger, seed, and environment in this process                  #
@@ -110,7 +111,6 @@ def run_polopt_agent(env_fn,
     # Make a sample estimate for entropy to use as sanity check
     approx_ent = tf.reduce_mean(-logp)
 
-
     #=========================================================================#
     #  Create replay buffer                                                   #
     #=========================================================================#
@@ -120,6 +120,7 @@ def run_polopt_agent(env_fn,
     act_shape = env.action_space.shape
 
     # Experience buffer
+    # TODO: 这多线程是怎么用的？仿真只可能顺序进行吧
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     pi_info_shapes = {k: v.shape.as_list()[1:] for k,v in pi_info_phs.items()}
     buf = CPOBuffer(local_steps_per_epoch,
@@ -188,7 +189,7 @@ def run_polopt_agent(env_fn,
 
     # Optimizer-specific symbols
     if agent.trust_region:
-        # TODO: 这里就是所谓的conjugate gradient，学习一下
+        # NOTE: 这里就是所谓的conjugate gradient，学习一下
         # Symbols needed for CG solver for any trust region method
         pi_params = get_vars('pi')
         flat_g = tro.flat_grad(pi_loss, pi_params)
@@ -333,21 +334,21 @@ def run_polopt_agent(env_fn,
                 deltas['Delta'+k] = post_update_measures[k] - pre_update_measures[k]
         logger.store(KL=post_update_measures['KL'], **deltas)
 
-
-
-
     #=========================================================================#
     #  Run main environment interaction loop                                  #
     #=========================================================================#
-
-    start_time = time.time()
-    o, r, d, c, ep_ret, ep_cost, ep_len = env.reset(), 0, False, 0, 0, 0, 0
-    o = np.append(o, cost_lim)
     cur_penalty = 0
     cum_cost = 0
-
     for epoch in range(epochs):
+        # Initialization
+        start_time = time.time()
+        # 得到当前epoch的threshold
+        cost_lim = thre_sche.update(epoch)
+        o, r, d, c, ep_ret, ep_cost, ep_len = env.reset(), 0, False, 0, 0, 0, 0
+        o = np.append(o, cost_lim)
 
+        # TODO: 不管lambda还是当threshold改变后初始化为0？
+        # TODO: lambda是怎么优化的？
         if agent.use_penalty:
             cur_penalty = sess.run(penalty)
 
@@ -368,19 +369,23 @@ def run_polopt_agent(env_fn,
 
             # Step in environment
             o2, r, d, info = env.step(a)
-            # TODO: 这里是输入threshold还是剩余budget？我倾向于后者
-            remain_budget = cost_lim - ep_cost
-            o2 = np.append(o2, remain_budget)
-
             # Include penalty on cost
             c = info.get('cost', 0)
-
+            ep_ret += r
+            ep_cost += c
+            ep_len += 1
             # Track cumulative cost over training
             cum_cost += c
 
+            # NOTE: 这里是输入threshold还是剩余budget？
+            remain_budget = cost_lim - ep_cost
+            o2 = np.append(o2, remain_budget)
+
             # save and log
+            # TODO: 怎么不存s'或者V(s')？而是当前的V(s)？你是怎么update policy的？
             if agent.reward_penalized:
                 r_total = r - cur_penalty * c
+                # TODO: 这TM什么操作？
                 r_total = r_total / (1 + cur_penalty)
                 buf.store(o, a, r_total, v_t, 0, 0, logp_t, pi_info_t)
             else:
@@ -388,10 +393,6 @@ def run_polopt_agent(env_fn,
             logger.store(VVals=v_t, CostVVals=vc_t)
 
             o = o2
-            ep_ret += r
-            ep_cost += c
-            ep_len += 1
-
             terminal = d or (ep_len == max_ep_len)
             if terminal or (t==local_steps_per_epoch-1):
 
@@ -438,6 +439,7 @@ def run_polopt_agent(env_fn,
         #=====================================================================#
 
         logger.log_tabular('Epoch', epoch)
+        logger.log_tabular('cost_lim', cost_lim)
 
         # Performance stats
         logger.log_tabular('EpRet', with_min_and_max=True)
@@ -487,6 +489,7 @@ def run_polopt_agent(env_fn,
 
         # Show results!
         logger.dump_tabular()
+
 
 if __name__ == '__main__':
     import argparse
