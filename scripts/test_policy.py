@@ -5,7 +5,7 @@ from safe_rl.utils.load_utils import load_policy
 from safe_rl.utils.logx import EpochLogger
 
 
-def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True, cost_lim=20):
+def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=False, cost_lim=20):
 
     assert env is not None, \
         "Environment not found!\n\n It looks like the environment wasn't saved, " + \
@@ -54,4 +54,4 @@ if __name__ == '__main__':
     env, get_action, sess = load_policy(args.fpath,
                                         args.itr if args.itr >=0 else 'last',
                                         args.deterministic)
-    run_policy(env, get_action, args.len, args.episodes, not(args.norender), cost_lim=args.cost_lim)
+    run_policy(env, get_action, args.len, args.episodes, cost_lim=args.cost_lim)
