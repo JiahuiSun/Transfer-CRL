@@ -52,7 +52,6 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu):
          steps_per_epoch=steps_per_epoch,
          save_freq=save_freq,
          target_kl=target_kl,
-         cost_lim=25,  # useless
          seed=seed,
          logger_kwargs=logger_kwargs,
          thre_sche=thre_sche
@@ -64,7 +63,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--robot', type=str, default='Point')
     parser.add_argument('--task', type=str, default='Goal1')
-    parser.add_argument('--algo', type=str, default='cpo')
+    parser.add_argument('--algo', type=str, default='ppo_lagrangian')
     parser.add_argument('--seed', type=int, default=100)
     parser.add_argument('--num_steps', type=float, default=3.3e7)
     parser.add_argument('--epoch_per_threshold', type=int, default=20)

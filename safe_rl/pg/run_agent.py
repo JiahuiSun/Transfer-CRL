@@ -37,7 +37,7 @@ def run_polopt_agent(env_fn,
                      # Policy learning:
                      ent_reg=0.,
                      # Cost constraints / penalties:
-                     cost_lim=25,
+                    #  cost_lim=25,
                      penalty_init=1.,
                      penalty_lr=5e-2,
                      # KL divergence:
@@ -84,6 +84,7 @@ def run_polopt_agent(env_fn,
     # Inputs to computation graph for special purposes
     surr_cost_rescale_ph = tf.placeholder(tf.float32, shape=())
     cur_cost_ph = tf.placeholder(tf.float32, shape=())
+    cost_lim_ph = tf.placeholder(tf.float32, shape=())
 
     # Outputs from actor critic
     ac_outs = actor_critic(x_ph, a_ph, **ac_kwargs)
@@ -120,7 +121,6 @@ def run_polopt_agent(env_fn,
     act_shape = env.action_space.shape
 
     # Experience buffer
-    # TODO: 这多线程是怎么用的？仿真只可能顺序进行吧
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     pi_info_shapes = {k: v.shape.as_list()[1:] for k,v in pi_info_phs.items()}
     buf = CPOBuffer(local_steps_per_epoch,
@@ -131,7 +131,6 @@ def run_polopt_agent(env_fn,
                     lam,
                     cost_gamma,
                     cost_lam)
-
 
     #=========================================================================#
     #  Create computation graph for penalty learning, if applicable           #
@@ -150,9 +149,10 @@ def run_polopt_agent(env_fn,
 
     if agent.learn_penalty:
         if agent.penalty_param_loss:
-            penalty_loss = -penalty_param * (cur_cost_ph - cost_lim)
+            # NOTE: 因为我们在训练时cost lim在变化，所以设为变量
+            penalty_loss = -penalty_param * (cur_cost_ph - cost_lim_ph)
         else:
-            penalty_loss = -penalty * (cur_cost_ph - cost_lim)
+            penalty_loss = -penalty * (cur_cost_ph - cost_lim_ph)
         train_penalty = MpiAdamOptimizer(learning_rate=penalty_lr).minimize(penalty_loss)
 
 
@@ -226,8 +226,7 @@ def run_polopt_agent(env_fn,
     training_package.update(dict(pi_loss=pi_loss, 
                                  surr_cost=surr_cost,
                                  d_kl=d_kl, 
-                                 target_kl=target_kl,
-                                 cost_lim=cost_lim))
+                                 target_kl=target_kl))
     agent.prepare_update(training_package)
 
     #=========================================================================#
@@ -273,7 +272,7 @@ def run_polopt_agent(env_fn,
     #  Create function for running update (called at end of each epoch)       #
     #=========================================================================#
 
-    def update():
+    def update(cost_lim):
         cur_cost = logger.get_stats('EpCost')[0]
         c = cur_cost - cost_lim
         if c > 0 and agent.cares_about_cost:
@@ -282,7 +281,6 @@ def run_polopt_agent(env_fn,
         #=====================================================================#
         #  Prepare feed dict                                                  #
         #=====================================================================#
-        # TODO: 这个current cost是如何被利用的？
         inputs = {k:v for k,v in zip(buf_phs, buf.get())}
         inputs[surr_cost_rescale_ph] = logger.get_stats('EpLen')[0]
         inputs[cur_cost_ph] = cur_cost
@@ -307,11 +305,12 @@ def run_polopt_agent(env_fn,
         #  Update penalty if learning penalty                                 #
         #=====================================================================#
         if agent.learn_penalty:
-            sess.run(train_penalty, feed_dict={cur_cost_ph: cur_cost})
+            sess.run(train_penalty, feed_dict={cur_cost_ph: cur_cost, cost_lim_ph: cost_lim})
 
         #=====================================================================#
         #  Update policy                                                      #
         #=====================================================================#
+        agent.training_package['cost_lim'] = cost_lim
         agent.update_pi(inputs)
 
         #=====================================================================#
@@ -337,18 +336,16 @@ def run_polopt_agent(env_fn,
     #=========================================================================#
     #  Run main environment interaction loop                                  #
     #=========================================================================#
+    start_time = time.time()
     cur_penalty = 0
     cum_cost = 0
     for epoch in range(epochs):
-        # Initialization
-        start_time = time.time()
         # 得到当前epoch的threshold
         cost_lim = thre_sche.update(epoch)
         o, r, d, c, ep_ret, ep_cost, ep_len = env.reset(), 0, False, 0, 0, 0, 0
         o = np.append(o, cost_lim)
 
-        # TODO: 不管lambda还是当threshold改变后初始化为0？
-        # TODO: lambda是怎么优化的？
+        # penalty每个epoch开始都初始化
         if agent.use_penalty:
             cur_penalty = sess.run(penalty)
 
@@ -382,10 +379,8 @@ def run_polopt_agent(env_fn,
             o2 = np.append(o2, remain_budget)
 
             # save and log
-            # TODO: 怎么不存s'或者V(s')？而是当前的V(s)？你是怎么update policy的？
             if agent.reward_penalized:
                 r_total = r - cur_penalty * c
-                # TODO: 这TM什么操作？
                 r_total = r_total / (1 + cur_penalty)
                 buf.store(o, a, r_total, v_t, 0, 0, logp_t, pi_info_t)
             else:
@@ -426,7 +421,7 @@ def run_polopt_agent(env_fn,
         #=====================================================================#
         #  Run RL update                                                      #
         #=====================================================================#
-        update()
+        update(cost_lim)
 
         #=====================================================================#
         #  Cumulative cost calculations                                       #
