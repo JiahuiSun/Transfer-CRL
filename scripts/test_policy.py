@@ -5,7 +5,7 @@ from safe_rl.utils.load_utils import load_policy
 from safe_rl.utils.logx import EpochLogger
 
 
-def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=False, cost_lim=20):
+def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=False, cost_lim=20, remain=True):
 
     assert env is not None, \
         "Environment not found!\n\n It looks like the environment wasn't saved, " + \
@@ -25,7 +25,10 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=False,
         ep_ret += r
         ep_cost += info.get('cost', 0)
         ep_len += 1
-        o = np.append(o, cost_lim-ep_cost)
+        if remain:
+            o = np.append(o, cost_lim-ep_cost)
+        else:
+            o = np.append(o, cost_lim) 
 
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpCost=ep_cost, EpLen=ep_len)
@@ -50,8 +53,10 @@ if __name__ == '__main__':
     parser.add_argument('--itr', '-i', type=int, default=-1)
     parser.add_argument('--deterministic', '-d', action='store_true')
     parser.add_argument('--cost_lim', type=float, default=20)
+    parser.add_argument('--remain', action='store_true')
     args = parser.parse_args()
     env, get_action, sess = load_policy(args.fpath,
                                         args.itr if args.itr >=0 else 'last',
                                         args.deterministic)
-    run_policy(env, get_action, args.len, args.episodes, cost_lim=args.cost_lim)
+    run_policy(env, get_action, args.len, args.episodes, 
+               cost_lim=args.cost_lim, remain=args.remain)
