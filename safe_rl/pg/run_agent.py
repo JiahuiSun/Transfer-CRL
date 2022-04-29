@@ -49,7 +49,8 @@ def run_polopt_agent(env_fn,
                      logger=None, 
                      logger_kwargs=dict(), 
                      save_freq=1,
-                     thre_sche=None
+                     thre_sche=None,
+                     remain=True
                      ):
 
     #=========================================================================#
@@ -374,9 +375,10 @@ def run_polopt_agent(env_fn,
             # Track cumulative cost over training
             cum_cost += c
 
-            # NOTE: 这里是输入threshold还是剩余budget？
-            remain_budget = cost_lim - ep_cost
-            o2 = np.append(o2, remain_budget)
+            if remain:
+                o2 = np.append(o2, cost_lim - ep_cost)
+            else:
+                o2 = np.append(o2, cost_lim)
 
             # save and log
             if agent.reward_penalized:

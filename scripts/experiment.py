@@ -7,7 +7,7 @@ from safe_rl.utils.mpi_tools import mpi_fork
 from safe_rl.utils.threshold_sche import ThresholdScheduler
 
 
-def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu):
+def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu, remain):
     # Verify experiment
     robot_list = ['point', 'car', 'doggo']
     task_list = ['goal1', 'goal2', 'button1', 'button2', 'push1', 'push2']
@@ -21,7 +21,7 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu):
     assert robot.lower() in robot_list, "Invalid robot"
 
     # Hyperparameters
-    exp_name = algo + '_' + robot + task
+    exp_name = f'{algo}_{robot}{task}_{num_steps//1e6}_{epoch_per_threshold}_{remain}'
     if robot=='Doggo':
         num_steps = 1e8
         steps_per_epoch = 60000
@@ -54,7 +54,8 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu):
          target_kl=target_kl,
          seed=seed,
          logger_kwargs=logger_kwargs,
-         thre_sche=thre_sche
+         thre_sche=thre_sche,
+         remain=remain
         )
 
 
@@ -65,11 +66,11 @@ if __name__ == '__main__':
     parser.add_argument('--task', type=str, default='Goal1')
     parser.add_argument('--algo', type=str, default='ppo_lagrangian')
     parser.add_argument('--seed', type=int, default=100)
+    parser.add_argument('--cpu', type=int, default=1)
+
     parser.add_argument('--num_steps', type=float, default=3.3e7)
     parser.add_argument('--epoch_per_threshold', type=int, default=20)
-    parser.add_argument('--cpu', type=int, default=1)
+    parser.add_argument('--remain', action='store_true')
     args = parser.parse_args()
-    # 当只训练1个threshold时，我们的方法就退化成了RCPO
-    # 当训练N个threshold，epoch_per_threshold=num_steps/3e4时，我们的方法相当于每个task按顺序训练
     main(args.robot, args.task, args.algo, args.seed,
-         args.num_steps, args.epoch_per_threshold, args.cpu)
+         args.num_steps, args.epoch_per_threshold, args.cpu, args.remain)
