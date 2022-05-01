@@ -4,10 +4,10 @@ import safety_gym
 import safe_rl
 from safe_rl.utils.run_utils import setup_logger_kwargs
 from safe_rl.utils.mpi_tools import mpi_fork
-from safe_rl.utils.threshold_sche import ThresholdScheduler
+from safe_rl.utils.sche import WeightScheduler
 
 
-def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu, remain):
+def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu):
     # Verify experiment
     robot_list = ['point', 'car', 'doggo']
     task_list = ['goal1', 'goal2', 'button1', 'button2', 'push1', 'push2']
@@ -21,7 +21,7 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu, remain):
     assert robot.lower() in robot_list, "Invalid robot"
 
     # Hyperparameters
-    exp_name = f'{algo}_{robot}{task}_{num_steps//1e6}_{epoch_per_threshold}_{remain}'
+    exp_name = f'{algo}_{robot}{task}_{num_steps//1e6}_{epoch_per_threshold}'
     if robot=='Doggo':
         num_steps = 1e8
         steps_per_epoch = 60000
@@ -31,7 +31,7 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu, remain):
     epochs = int(num_steps / steps_per_epoch)
     save_freq = 50
     target_kl = 0.01
-    thre_sche = ThresholdScheduler(epoch_per_threshold)
+    thre_sche = WeightScheduler(epoch_per_threshold)
 
     # Fork for parallelizing
     mpi_fork(cpu)
@@ -54,8 +54,7 @@ def main(robot, task, algo, seed, num_steps, epoch_per_threshold, cpu, remain):
          target_kl=target_kl,
          seed=seed,
          logger_kwargs=logger_kwargs,
-         thre_sche=thre_sche,
-         remain=remain
+         thre_sche=thre_sche
         )
 
 
@@ -70,7 +69,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_steps', type=float, default=3.3e7)
     parser.add_argument('--epoch_per_threshold', type=int, default=20)
-    parser.add_argument('--remain', action='store_true')
     args = parser.parse_args()
     main(args.robot, args.task, args.algo, args.seed,
-         args.num_steps, args.epoch_per_threshold, args.cpu, args.remain)
+         args.num_steps, args.epoch_per_threshold, args.cpu)

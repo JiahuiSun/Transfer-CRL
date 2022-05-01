@@ -37,7 +37,6 @@ def run_polopt_agent(env_fn,
                      # Policy learning:
                      ent_reg=0.,
                      # Cost constraints / penalties:
-                    #  cost_lim=25,
                      penalty_init=1.,
                      penalty_lr=5e-2,
                      # KL divergence:
@@ -49,8 +48,7 @@ def run_polopt_agent(env_fn,
                      logger=None, 
                      logger_kwargs=dict(), 
                      save_freq=1,
-                     thre_sche=None,
-                     remain=True
+                     thre_sche=None
                      ):
 
     #=========================================================================#
@@ -65,6 +63,8 @@ def run_polopt_agent(env_fn,
     np.random.seed(seed)
 
     env = env_fn()
+    r_dim=thre_sche.r_dim
+    c_dim=thre_sche.c_dim
 
     agent.set_logger(logger)
 
@@ -76,11 +76,14 @@ def run_polopt_agent(env_fn,
     ac_kwargs['action_space'] = env.action_space
 
     # Inputs to computation graph from environment spaces
-    observation_space = spaces.Box(-np.inf, np.inf, (env.observation_space.shape[0]+1,))
+    # TODO: 这里设计AC的input，先就naive地把weight、threshold和obs拼起来吧
+    observation_space = spaces.Box(-np.inf, np.inf, (env.observation_space.shape[0]+6,))
     x_ph, a_ph = placeholders_from_spaces(observation_space, env.action_space)
 
     # Inputs to computation graph for batch data
-    adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph = placeholders(*(None for _ in range(5)))
+    adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph = placeholders(*(r_dim, c_dim, r_dim, c_dim, None))
+    wr_ph = tf.placeholder(dtype=tf.float32, shape=(r_dim, 1))
+    wc_ph = tf.placeholder(dtype=tf.float32, shape=(c_dim, 1))
 
     # Inputs to computation graph for special purposes
     surr_cost_rescale_ph = tf.placeholder(tf.float32, shape=())
@@ -131,7 +134,9 @@ def run_polopt_agent(env_fn,
                     gamma, 
                     lam,
                     cost_gamma,
-                    cost_lam)
+                    cost_lam,
+                    r_dim=r_dim,
+                    c_dim=c_dim)
 
     #=========================================================================#
     #  Create computation graph for penalty learning, if applicable           #
@@ -163,27 +168,29 @@ def run_polopt_agent(env_fn,
 
     # Likelihood ratio
     ratio = tf.exp(logp - logp_old_ph)
+    wr_adv = tf.matmul(adv_ph, wr_ph)
+    wc_adv = tf.matmul(cadv_ph, wc_ph)
 
     # Surrogate advantage / clipped surrogate advantage
     if agent.clipped_adv:
-        min_adv = tf.where(adv_ph>0, 
-                           (1+agent.clip_ratio)*adv_ph, 
-                           (1-agent.clip_ratio)*adv_ph
+        min_adv = tf.where(wr_adv>0, 
+                           (1+agent.clip_ratio)*wr_adv, 
+                           (1-agent.clip_ratio)*wr_adv
                            )
-        surr_adv = tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
+        surr_adv = tf.reduce_mean(tf.minimum(ratio * wr_adv, min_adv))
     else:
-        surr_adv = tf.reduce_mean(ratio * adv_ph)  # CPO不用PPO那样的clip方法
-
+        surr_adv = tf.reduce_mean(ratio * wr_adv)  # CPO不用PPO那样的clip方法
+    # TODO: 这里怎么把vector的输出，乘个weight变成scalar？
     # Surrogate cost 
-    surr_cost = tf.reduce_mean(ratio * cadv_ph)
+    surr_cost = tf.reduce_mean(ratio * wc_adv)
 
     # Create policy objective function, including entropy regularization
     pi_objective = surr_adv + ent_reg * ent
 
     # Possibly include surr_cost in pi_objective
     if agent.objective_penalized:
-        pi_objective -= penalty * surr_cost  # 这应该就是r-lambda*c
-        pi_objective /= (1 + penalty)
+        pi_objective -= penalty * surr_cost  # 这应该就是r-lambda*c，但不知道为啥下边要除
+        pi_objective /= (1 + penalty)  
 
     # Loss function for pi is negative of pi_objective
     pi_loss = -pi_objective
@@ -273,7 +280,7 @@ def run_polopt_agent(env_fn,
     #  Create function for running update (called at end of each epoch)       #
     #=========================================================================#
 
-    def update(cost_lim):
+    def update(wr, wc, cost_lim):
         cur_cost = logger.get_stats('EpCost')[0]
         c = cur_cost - cost_lim
         if c > 0 and agent.cares_about_cost:
@@ -285,6 +292,9 @@ def run_polopt_agent(env_fn,
         inputs = {k:v for k,v in zip(buf_phs, buf.get())}
         inputs[surr_cost_rescale_ph] = logger.get_stats('EpLen')[0]
         inputs[cur_cost_ph] = cur_cost
+        # TODO: 给训练策略所需要的输入
+        inputs[wr_ph] = wr
+        inputs[wc_ph] = wc
 
         #=====================================================================#
         #  Make some measurements before updating                             #
@@ -342,9 +352,11 @@ def run_polopt_agent(env_fn,
     cum_cost = 0
     for epoch in range(epochs):
         # 得到当前epoch的threshold
-        cost_lim = thre_sche.update(epoch)
+        wr, wc, cost_lim = thre_sche.update(epoch)
+
+        # TODO: 环境这里是vector reward和cost
         o, r, d, c, ep_ret, ep_cost, ep_len = env.reset(), 0, False, 0, 0, 0, 0
-        o = np.append(o, cost_lim)
+        o = np.append(o, np.append(np.append(wr, wc), cost_lim))
 
         # penalty并没有每个epoch初始化，它只是计算一下现在的penalty是多少
         if agent.use_penalty:
@@ -367,19 +379,14 @@ def run_polopt_agent(env_fn,
 
             # Step in environment
             o2, r, d, info = env.step(a)
+            o2 = np.append(o2, np.append(np.append(wr, wc), cost_lim))
             # Include penalty on cost
             c = info.get('cost', 0)
-            ep_ret += r
-            ep_cost += c
+            ep_ret += np.dot(r, wr)
+            ep_cost += np.dot(c, wc)
             ep_len += 1
             # Track cumulative cost over training
-            cum_cost += c
-
-            if remain:
-                # TODO: 我觉得这里不太对，因为remain可能为负值，而且不受动作控制
-                o2 = np.append(o2, cost_lim - ep_cost)
-            else:
-                o2 = np.append(o2, cost_lim)
+            cum_cost += np.dot(c, wc)
 
             # save and log
             if agent.reward_penalized:
@@ -397,7 +404,7 @@ def run_polopt_agent(env_fn,
                 # If trajectory didn't reach terminal state, bootstrap value target(s)
                 if d and not(ep_len == max_ep_len):
                     # Note: we do not count env time out as true terminal state
-                    last_val, last_cval = 0, 0
+                    last_val, last_cval = [[0]*r_dim], [[0]*c_dim]
                 else:
                     feed_dict={x_ph: o[np.newaxis]}
                     if agent.reward_penalized:
@@ -415,7 +422,7 @@ def run_polopt_agent(env_fn,
 
                 # Reset environment
                 o, r, d, c, ep_ret, ep_len, ep_cost = env.reset(), 0, False, 0, 0, 0, 0
-                o = np.append(o, cost_lim)
+                o = np.append(o, np.append(np.append(wr, wc), cost_lim))
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
@@ -424,7 +431,7 @@ def run_polopt_agent(env_fn,
         #=====================================================================#
         #  Run RL update                                                      #
         #=====================================================================#
-        update(cost_lim)
+        update(wr, wc, cost_lim)
 
         #=====================================================================#
         #  Cumulative cost calculations                                       #

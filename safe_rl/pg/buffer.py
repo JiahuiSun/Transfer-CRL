@@ -12,17 +12,17 @@ class CPOBuffer:
     def __init__(self, size, 
                  obs_shape, act_shape, pi_info_shapes, 
                  gamma=0.99, lam=0.95,
-                 cost_gamma=0.99, cost_lam=0.95):
+                 cost_gamma=0.99, cost_lam=0.95, r_dim=2, c_dim=3):
         self.obs_buf = np.zeros(combined_shape(size, obs_shape), dtype=np.float32)
         self.act_buf = np.zeros(combined_shape(size, act_shape), dtype=np.float32)
-        self.adv_buf = np.zeros(size, dtype=np.float32)
-        self.rew_buf = np.zeros(size, dtype=np.float32)
-        self.ret_buf = np.zeros(size, dtype=np.float32)
-        self.val_buf = np.zeros(size, dtype=np.float32)
-        self.cadv_buf = np.zeros(size, dtype=np.float32)    # cost advantage
-        self.cost_buf = np.zeros(size, dtype=np.float32)    # costs
-        self.cret_buf = np.zeros(size, dtype=np.float32)    # cost return
-        self.cval_buf = np.zeros(size, dtype=np.float32)    # cost value
+        self.adv_buf = np.zeros((size, r_dim), dtype=np.float32)
+        self.rew_buf = np.zeros((size, r_dim), dtype=np.float32)
+        self.ret_buf = np.zeros((size, r_dim), dtype=np.float32)
+        self.val_buf = np.zeros((size, r_dim), dtype=np.float32)
+        self.cadv_buf = np.zeros((size, c_dim), dtype=np.float32)    # cost advantage
+        self.cost_buf = np.zeros((size, c_dim), dtype=np.float32)    # costs
+        self.cret_buf = np.zeros((size, c_dim), dtype=np.float32)    # cost return
+        self.cval_buf = np.zeros((size, c_dim), dtype=np.float32)    # cost value
         self.logp_buf = np.zeros(size, dtype=np.float32)
         self.pi_info_bufs = {k: np.zeros([size] + list(v), dtype=np.float32) 
                              for k,v in pi_info_shapes.items()}
@@ -46,14 +46,14 @@ class CPOBuffer:
 
     def finish_path(self, last_val=0, last_cval=0):
         path_slice = slice(self.path_start_idx, self.ptr)
-        rews = np.append(self.rew_buf[path_slice], last_val)
-        vals = np.append(self.val_buf[path_slice], last_val)
+        rews = np.append(self.rew_buf[path_slice], last_val, axis=0)
+        vals = np.append(self.val_buf[path_slice], last_val, axis=0)
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
         self.adv_buf[path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
         self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
 
-        costs = np.append(self.cost_buf[path_slice], last_cval)
-        cvals = np.append(self.cval_buf[path_slice], last_cval)
+        costs = np.append(self.cost_buf[path_slice], last_cval, axis=0)
+        cvals = np.append(self.cval_buf[path_slice], last_cval, axis=0)
         cdeltas = costs[:-1] + self.gamma * cvals[1:] - cvals[:-1]
         self.cadv_buf[path_slice] = discount_cumsum(cdeltas, self.cost_gamma * self.cost_lam)
         self.cret_buf[path_slice] = discount_cumsum(costs, self.cost_gamma)[:-1]

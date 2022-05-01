@@ -170,13 +170,15 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
         policy = mlp_categorical_policy
 
     with tf.variable_scope('pi'):
+        # TODO: 怎么修改网络结构，让threshold的识别度更高呢？
         policy_outs = policy(x, a, hidden_sizes, activation, output_activation, action_space)
         pi, logp, logp_pi, pi_info, pi_info_phs, d_kl, ent = policy_outs
 
     with tf.variable_scope('vf'):
-        v = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
+        # TODO: 这里就是输出维度修改吧
+        v = tf.squeeze(mlp(x, list(hidden_sizes)+[2], activation, None), axis=1)
 
     with tf.variable_scope('vc'):
-        vc = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
+        vc = tf.squeeze(mlp(x, list(hidden_sizes)+[3], activation, None), axis=1)
 
     return pi, logp, logp_pi, pi_info, pi_info_phs, d_kl, ent, v, vc

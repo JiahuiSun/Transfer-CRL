@@ -18,3 +18,22 @@ class ThresholdScheduler:
             self.threshold = self.threshold_list[self.t_idx%len(self.threshold_list)]
             self.t_idx += 1
         return self.threshold
+
+
+class WeightScheduler:
+    def __init__(self, epoch_per_weight=1):
+        self.epoch_per_weight = epoch_per_weight
+        self.wr_list = [[1, 0], [0.5, 0.5], [0, 1]]
+        self.wc_list = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        self.threshold_list = [10, 25, 50]
+        self.idx = 0
+        self.threshold = self.threshold_list[self.idx]
+        self.wr = self.wr_list[self.idx]
+        self.wc = self.wc_list[self.idx]
+        self.r_dim, self.c_dim = len(self.wr), len(self.wc)
+        
+    def update(self, epoch):
+        if epoch % self.epoch_per_weight == 0:
+            self.threshold = self.threshold_list[self.idx%len(self.threshold_list)]
+            self.idx += 1
+        return self.wr, self.wc, self.threshold
