@@ -182,7 +182,7 @@ def run_polopt_agent(env_fn,
 
     # Possibly include surr_cost in pi_objective
     if agent.objective_penalized:
-        pi_objective -= penalty * surr_cost
+        pi_objective -= penalty * surr_cost  # 这应该就是r-lambda*c
         pi_objective /= (1 + penalty)
 
     # Loss function for pi is negative of pi_objective
@@ -346,7 +346,7 @@ def run_polopt_agent(env_fn,
         o, r, d, c, ep_ret, ep_cost, ep_len = env.reset(), 0, False, 0, 0, 0, 0
         o = np.append(o, cost_lim)
 
-        # penalty每个epoch开始都初始化
+        # penalty并没有每个epoch初始化，它只是计算一下现在的penalty是多少
         if agent.use_penalty:
             cur_penalty = sess.run(penalty)
 
@@ -376,6 +376,7 @@ def run_polopt_agent(env_fn,
             cum_cost += c
 
             if remain:
+                # TODO: 我觉得这里不太对，因为remain可能为负值，而且不受动作控制
                 o2 = np.append(o2, cost_lim - ep_cost)
             else:
                 o2 = np.append(o2, cost_lim)
