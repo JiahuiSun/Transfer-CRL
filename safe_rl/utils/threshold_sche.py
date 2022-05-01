@@ -5,7 +5,7 @@ class ThresholdScheduler:
     def __init__(self, epoch_per_threshold=1):
         self.epoch_per_threshold = epoch_per_threshold
         self.threshold_list = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
-        np.random.shuffle(self.threshold_list)
+        # np.random.shuffle(self.threshold_list)
         self.t_idx = 0
         self.threshold = self.threshold_list[self.t_idx]
         self.test_threshold_list = [5, 20, 25, 30, 55, 0, 27.5, 32.5, 37.5, 100]
