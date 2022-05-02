@@ -409,7 +409,7 @@ def run_polopt_agent(env_fn,
                     feed_dict={x_ph: o[np.newaxis]}
                     if agent.reward_penalized:
                         last_val = sess.run(v, feed_dict=feed_dict)
-                        last_cval = 0
+                        last_cval = [[0]*c_dim]
                     else:
                         last_val, last_cval = sess.run([v, vc], feed_dict=feed_dict)
                 buf.finish_path(last_val, last_cval)
