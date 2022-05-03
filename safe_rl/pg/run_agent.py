@@ -81,9 +81,7 @@ def run_polopt_agent(env_fn,
     x_ph, a_ph = placeholders_from_spaces(observation_space, env.action_space)
 
     # Inputs to computation graph for batch data
-    adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph = placeholders(*(r_dim, c_dim, r_dim, c_dim, None))
-    wr_ph = tf.placeholder(dtype=tf.float32, shape=(r_dim, 1))
-    wc_ph = tf.placeholder(dtype=tf.float32, shape=(c_dim, 1))
+    adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph = placeholders(*(None for _ in range(5)))
 
     # Inputs to computation graph for special purposes
     surr_cost_rescale_ph = tf.placeholder(tf.float32, shape=())
@@ -92,6 +90,7 @@ def run_polopt_agent(env_fn,
 
     # Outputs from actor critic
     ac_outs = actor_critic(x_ph, a_ph, **ac_kwargs)
+    # TODO: logp_pi, pi_info?
     pi, logp, logp_pi, pi_info, pi_info_phs, d_kl, ent, v, vc = ac_outs
 
     # Organize placeholders for zipping with data from buffer on updates
@@ -134,9 +133,7 @@ def run_polopt_agent(env_fn,
                     gamma, 
                     lam,
                     cost_gamma,
-                    cost_lam,
-                    r_dim=r_dim,
-                    c_dim=c_dim)
+                    cost_lam)
 
     #=========================================================================#
     #  Create computation graph for penalty learning, if applicable           #
@@ -168,21 +165,19 @@ def run_polopt_agent(env_fn,
 
     # Likelihood ratio
     ratio = tf.exp(logp - logp_old_ph)
-    wr_adv = tf.matmul(adv_ph, wr_ph)
-    wc_adv = tf.matmul(cadv_ph, wc_ph)
 
     # Surrogate advantage / clipped surrogate advantage
     if agent.clipped_adv:
-        min_adv = tf.where(wr_adv>0, 
-                           (1+agent.clip_ratio)*wr_adv, 
-                           (1-agent.clip_ratio)*wr_adv
+        min_adv = tf.where(adv_ph>0, 
+                           (1+agent.clip_ratio)*adv_ph, 
+                           (1-agent.clip_ratio)*adv_ph
                            )
-        surr_adv = tf.reduce_mean(tf.minimum(ratio * wr_adv, min_adv))
+        surr_adv = tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
     else:
-        surr_adv = tf.reduce_mean(ratio * wr_adv)  # CPO不用PPO那样的clip方法
-    # TODO: 这里怎么把vector的输出，乘个weight变成scalar？
+        surr_adv = tf.reduce_mean(ratio * adv_ph)  # CPO不用PPO那样的clip方法
+
     # Surrogate cost 
-    surr_cost = tf.reduce_mean(ratio * wc_adv)
+    surr_cost = tf.reduce_mean(ratio * cadv_ph)
 
     # Create policy objective function, including entropy regularization
     pi_objective = surr_adv + ent_reg * ent
@@ -280,7 +275,7 @@ def run_polopt_agent(env_fn,
     #  Create function for running update (called at end of each epoch)       #
     #=========================================================================#
 
-    def update(wr, wc, cost_lim):
+    def update(cost_lim):
         cur_cost = logger.get_stats('EpCost')[0]
         c = cur_cost - cost_lim
         if c > 0 and agent.cares_about_cost:
@@ -292,9 +287,6 @@ def run_polopt_agent(env_fn,
         inputs = {k:v for k,v in zip(buf_phs, buf.get())}
         inputs[surr_cost_rescale_ph] = logger.get_stats('EpLen')[0]
         inputs[cur_cost_ph] = cur_cost
-        # TODO: 给训练策略所需要的输入
-        inputs[wr_ph] = wr
-        inputs[wc_ph] = wc
 
         #=====================================================================#
         #  Make some measurements before updating                             #
@@ -389,6 +381,8 @@ def run_polopt_agent(env_fn,
             cum_cost += np.dot(c, wc)
 
             # save and log
+            # TODO: 保存多个buffer？到底用不用多个task同时sample？如果每个task有
+            # 学习一下multi-task的操作方式
             if agent.reward_penalized:
                 r_total = r - cur_penalty * c
                 r_total = r_total / (1 + cur_penalty)
@@ -431,7 +425,7 @@ def run_polopt_agent(env_fn,
         #=====================================================================#
         #  Run RL update                                                      #
         #=====================================================================#
-        update(wr, wc, cost_lim)
+        update(cost_lim)
 
         #=====================================================================#
         #  Cumulative cost calculations                                       #
